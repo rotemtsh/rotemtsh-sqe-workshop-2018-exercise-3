@@ -30,7 +30,7 @@
                 </td>
                 <td>
                     <div>
-                        <label>Parsed code here</label>
+                        <label>CFG of code here</label>
                     </div>
                 </td>
             </tr>
@@ -41,13 +41,15 @@
                     </div>
                 </td>
                 <td>
-                    <div class="textAreaWrapper">
-                        <textarea id="parsedCode" title="Parse code"></textarea>
-                    </div>
+                    <div id="outputGraph"></div>
                 </td>
             </tr>
+
             <tr>
                 <td>
+                    <div class="textAreaWrapper" style="height: 40%">
+                        <textarea id="applyCode" title="Apply code"></textarea>
+                    </div>
                     <div>
                         <button id="codeSubmissionButton">Parse code</button>
                     </div>
