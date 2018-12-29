@@ -2,8 +2,6 @@ var Parser = require('expr-eval').Parser;
 import {parseCode} from './code-analyzer';
 
 var initAss =[];
-var globals =[];
-var initAssignmentDic = {};
 
 const pushFunctions = {
     'Program': ProgramParsing,
@@ -17,6 +15,7 @@ const pushFunctions = {
 const returnFunctions = {
     'Identifier': IdentifierParsing,
     'BinaryExpression': BinaryParsing,
+    'LogicalExpression': BinaryParsing,
     'Literal': LiteralParsing,
     'UnaryExpression': UnaryParsing,
     'MemberExpression': MemberParsing,
@@ -54,8 +53,8 @@ function ProgramParsing(parsedCode, assignments){
     }
 }
 
-function FunctionParsing(parsedCode) {
-    parsedCode['params'].forEach(param => insertParams(param));
+function FunctionParsing(parsedCode, assignments) {
+    parsedCode['params'].forEach(param => insertParams(param, assignments));
 }
 
 /**
@@ -71,20 +70,16 @@ function declaration(parsedCode, assignments){
     name = returnFunctions[name.type](name, assignments);
     var value = parsedCode['init'];
     value = returnFunctions[value.type](value, assignments);
-    assignments[name] = getAns(value,assignments);
+    assignments[name] = value;
 }
 
+/**
+ * @return {boolean}
+ */
 function ExpressionParsing(parsedCode, assignments){
     if(parsedCode['expression']['type'] === 'AssignmentExpression')
-        AssignmentParsing(parsedCode['expression'], assignments);
-    else if(parsedCode['expression']['type'] === 'UpdateExpression') {
-        UpdateParsing(parsedCode['expression'], assignments);
-    }
-    else if(returnFunctions[parsedCode['expression'].type]){
-        return returnFunctions[parsedCode['expression'].type](parsedCode['expression'], assignments);
-    }
-    else //CallExpression
-        parsedCode['expression']['arguments'].forEach(body=> initAss.push(returnFunctions[body.type](body, assignments)));
+        return AssignmentParsing(parsedCode['expression'], assignments);
+    return returnFunctions[parsedCode['expression'].type](parsedCode['expression'], assignments);
 }
 
 /**
@@ -92,14 +87,21 @@ function ExpressionParsing(parsedCode, assignments){
  */
 function AssignmentParsing(parsedCode, assignments){
     var left = parsedCode['left'];
-    //left = returnFunctions[left.type](left, assignments);
-    left = getLeftStr(left);
     var value = parsedCode['right'];
     value = returnFunctions[value.type](value, assignments);
-    if(left.indexOf('[')> (-1)){
-        changeArrayIdx(left, value);
+    if(left.type === 'Identifier'){
+        assignments[left.name] = value;
     }
-    else assignments[left] = getAns(value, assignments);
+    else{//array
+        var prop = left.property.value;
+        var oldVal = assignments[left.object.name];
+        var splitedOld = oldVal.slice(1, -1).split(', ');
+        splitedOld[prop] = value;
+        var newVal = '[';
+        splitedOld.forEach(str => newVal += str + ', ');
+        newVal.slice(0, -2);
+        newVal +=']';
+    }
     return true;
 }
 
@@ -109,8 +111,8 @@ function BlockParsing(parsedCode, assignments){
     parsedCode['body'].forEach(body => makeRow(body, newAss));
 }
 
-function IdentifierParsing(parsedCode){
-    return parsedCode['name'];
+function IdentifierParsing(parsedCode, assignments){
+    return checkInAss(parsedCode['name'], assignments);
 }
 
 /**
@@ -136,7 +138,7 @@ function LiteralParsing(parsedCode){
 function UnaryParsing(parsedCode, assignments){
     var value = parsedCode['argument'];
     value = returnFunctions[value.type](value, assignments);
-    return parsedCode['operator'] + '' + value;
+    return getAns(parsedCode['operator'] + '' + value,assignments);
 }
 
 /**
@@ -146,7 +148,8 @@ function MemberParsing(parsedCode, assignments){
     var value = parsedCode['object'];
     value = returnFunctions[value.type](value, assignments);
     var property = returnFunctions[parsedCode['property'].type](parsedCode['property'], assignments);
-    return getAns('' + value +'[' + property +']', assignments);
+    var toRet = value.slice(1, -1).split(',')[property].trim();
+    return toRet;
 }
 
 
@@ -172,18 +175,30 @@ function ArrayParsing(parsedCode,assignments){
     return retVal;
 }
 
-function insertParams(parsedCodeParam){
+function insertParams(parsedCodeParam, assignments){
     if(initAss.length > 0) {
-        initAssignmentDic[parsedCodeParam['name']] = initAss[0];
+        assignments[parsedCodeParam['name']] = initAss[0];
         initAss.shift();
     }
-    globals.push(parsedCodeParam['name']);
 }
 
 function clearMyRows(){
     initAss =[];
-    globals =[];
-    initAssignmentDic = {};
+}
+
+function checkInAss(variable, assignments){
+    var valToRet ='';
+    var value = assignments[variable];
+    if(value != null) {
+        if (assignments[value] != null)
+            valToRet = checkInAss(assignments[value], assignments);
+        else valToRet = '' + value;
+    }
+    else valToRet = '' +variable;
+    if(['true','false'].includes(valToRet)){
+        return valToRet === 'true';
+    }
+    return valToRet;
 }
 
 function getAns(test, assignments){
@@ -193,7 +208,7 @@ function getAns(test, assignments){
     if(test.indexOf('\'') > 0){
         return strInTest(dict, expr);
     }
-    if(checkIfBool(expr)) {
+    if(checkIfBool(expr, dict)) {
         return boolInTest(dict, expr);
     }
     try { return expr.evaluate(dict); }
@@ -202,10 +217,8 @@ function getAns(test, assignments){
 
 function fillDict(assignments){
     var dict = {};
-    for(var key1 in assignments)
-        dict[key1] = assignments[key1];
-    for(var key in initAssignmentDic)
-        dict[key] = initAssignmentDic[key];
+    for(var key in assignments)
+        dict[key] = assignments[key];
     return dict;
 }
 
@@ -219,30 +232,37 @@ function strInTest(dict, expr){
 }
 
 function boolInTest(dict,expr){
-    var keyInDict = expr.tokens[0].value;
+    let keyInDict = '' + expr.tokens[0].value;
     let valInDict = dict[keyInDict];
-    let val = ''+expr.tokens[1].value;
-    if(expr.tokens[2].value.indexOf('!') >=0)
-        return valInDict !== val;
-    else return valInDict === val;
+    if(expr.tokens.length > 2) {
+        let val = '' + expr.tokens[1].value;
+        if (expr.tokens[2].value.indexOf('!') >= 0)
+            return keyInDict !== val;
+        else return keyInDict === val;
+    }
+    else if(expr.tokens.length === 2)
+        return !keyInDict;
+    else return valInDict === 'true';
 }
 
-function checkIfBool(expr){
+function checkIfBool(expr, dict){
     if(expr.tokens.length > 2) {
         for (let i =0; i<expr.tokens.length; i++) {
-            if (expr.tokens[i].value === true | expr.tokens[i].value === false) {
+            if (expr.tokens[i].value === true || expr.tokens[i].value === false) {
                 return true;
             }
         }
     }
-    return false;
+    return checkIfSingleBool(expr, dict);
 }
 
-function getLeftStr(left){
-    if(left.type === 'Identifier')
-        return ''+left.name;
-    else//member
-        return ''+left['object'].name+'[' + left['property'].value + ']';
+function checkIfSingleBool(expr, dict) {
+    var bool = ['true', 'false', true, false];
+    if(expr.tokens.length <= 2) {
+        var val = expr.tokens[0].value;
+        return (bool.includes(val) || bool.includes(dict[val]));
+    }
+    return false;
 }
 
 function replaceArray(test,assignment){
@@ -252,11 +272,7 @@ function replaceArray(test,assignment){
         if (splitOpenBraces.length > 1) {
             var splitCloseBraces = splitOpenBraces[1].split(']');
             var place = replaceArray(splitCloseBraces[0], assignment);
-            var array = '';
-            if (initAssignmentDic[splitOpenBraces[0]] != null)
-                array = initAssignmentDic[splitOpenBraces[0]];
-            else {array = assignment[splitOpenBraces[0]];
-                if(array.indexOf('[')===-1) array = initAssignmentDic[array];}
+            var array = assignment[splitOpenBraces[0]];
             var args = array.split('[')[1].split(']')[0];
             args = args.split(',');
             testToRet += args[place] + ' ';
@@ -303,51 +319,51 @@ function getArrayStr(j, variable, code, startChar){
     return [j,variable];
 }
 
-function changeArrayIdx(left, value, assignment){
-    var property = '';
-    var arrIdx = left.indexOf('[');
-    for(let i = arrIdx+1; i<left.indexOf(']'); i++){
-        property += left.charAt(i);
-    }
-    var idx = parseInt(property);
+// function changeArrayIdx(left, value, assignment){
+//     var property = '';
+//     var arrIdx = left.indexOf('[');
+//     for(let i = arrIdx+1; i<left.indexOf(']'); i++){
+//         property += left.charAt(i);
+//     }
+//     var idx = parseInt(property);
+//
+//     if(initAssignmentDic[left.substr(0, arrIdx)]) {
+//         let oldVal = initAssignmentDic[left.substr(0, arrIdx)];
+//         let ret = buildArrStr(oldVal, idx, value);
+//         initAssignmentDic[left.substr(0, arrIdx)] = ret;
+//     }
+//     else {
+//         let oldVal = assignment[left.substr(0, arrIdx)];
+//         let ret = buildArrStr(oldVal, idx, value);
+//         assignment[left.substr(0, arrIdx)] = ret;
+//     }
+// }
 
-    if(initAssignmentDic[left.substr(0, arrIdx)]) {
-        let oldVal = initAssignmentDic[left.substr(0, arrIdx)];
-        let ret = buildArrStr(oldVal, idx, value);
-        initAssignmentDic[left.substr(0, arrIdx)] = ret;
-    }
-    else {
-        let oldVal = assignment[left.substr(0, arrIdx)];
-        let ret = buildArrStr(oldVal, idx, value);
-        assignment[left.substr(0, arrIdx)] = ret;
-    }
-}
+// function buildArrStr(oldVal, idx, value){
+//     var ret ='';
+//     var splitVal = oldVal.split(',');
+//     if(idx ===0){
+//         ret +='[';
+//         ret = forloop(ret, splitVal, idx, value);
+//     }
+//     else if(idx === splitVal.length-1){
+//         ret = forloop(ret, splitVal, idx, value);
+//         ret.slice(0, -1);
+//         ret += ']';
+//     }
+//     else{
+//         ret = forloop(ret, splitVal, idx, value);
+//     }
+//     return ret;
+// }
 
-function buildArrStr(oldVal, idx, value){
-    var ret ='';
-    var splitVal = oldVal.split(',');
-    if(idx ===0){
-        ret +='[';
-        ret = forloop(ret, splitVal, idx, value);
-    }
-    else if(idx === splitVal.length-1){
-        ret = forloop(ret, splitVal, idx, value);
-        ret.slice(0, -1);
-        ret += ']';
-    }
-    else{
-        ret = forloop(ret, splitVal, idx, value);
-    }
-    return ret;
-}
-
-function forloop(ret, splitVal, idx, value){
-    for(let j = 0; j<splitVal.length; j++){
-        if(j !== idx)
-            ret += splitVal[j] +',';
-        else ret += value +',';
-    }
-    return ret;
-}
+// function forloop(ret, splitVal, idx, value){
+//     for(let j = 0; j<splitVal.length; j++){
+//         if(j !== idx)
+//             ret += splitVal[j] +',';
+//         else ret += value +',';
+//     }
+//     return ret;
+// }
 
 export {colorCfg, clearMyRows};

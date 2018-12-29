@@ -4,8 +4,17 @@ import {colorCfg} from './evaluateGraphPath';
 
 
 function makeGraph(callCode, code) {
+    var cfg = buildCfg(code);
+    return addColorsAndBuildDot(cfg, callCode, code);
+}
+
+function buildCfg(code){
     var cfg = esgraph(code.body[0].body)[2];
     cfg = removeFromCfg(cfg);
+    return cfg;
+}
+
+function addColorsAndBuildDot(cfg, callCode, code){
     colorCfg(cfg, callCode, code, {});
     return buildDot(cfg);
 }
@@ -97,4 +106,4 @@ function falseNode (nodes, res, i, node){
 }
 
 
-export {makeGraph};
+export {makeGraph, buildCfg};
