@@ -21,29 +21,37 @@ function addColorsAndBuildDot(cfg, callCode, code){
 
 function removeFromCfg(cfg){
     cfg.forEach(node => delete node.exception);
-    let exitNode = cfg[cfg.length - 1];
-    let returnNode = exitNode.prev.filter(node => node.astNode.type === 'ReturnStatement')[0];
+    let last = cfg.length - 1;
+    let exitNode = cfg[last];
     cfg[0].normal.type = 'entry';
     cfg[0].normal.prev = [];
-    returnNode.type = 'exit';
-    returnNode.next = [];
-    delete returnNode.normal;
-    cfg = cfg.slice(1, cfg.length - 1);
-    cfg.forEach(node => node.label = escodegen.generate(node.astNode));
+    changeReturnNode(exitNode);
+    cfg = cfg.slice(1, last);
+    cfg.forEach(node => node.label = escodegen.generate(node.astNode, {format: {compact: true}}));
     unionNormalNodes(cfg);
     return cfg;
+}
+
+function changeReturnNode(exitNode){
+    for(var node of exitNode.prev){
+        if (node.astNode.type === 'ReturnStatement') {
+            node.type = 'exit';
+            node.next = [];
+            delete node.normal;
+            return;
+        }
+    }
 }
 
 function unionNormalNodes(cfg){
     for (var i=0; i<cfg.length; i++){
         let nodei = cfg[i];
         if (nodei.normal && nodei.normal.normal){
-            let nextNode = nodei.normal;
-            let idx = cfg.indexOf(nextNode);
-            nodei.next = nextNode.next;
-            nodei.normal = nextNode.normal;
-            nodei.label += '\n' + nextNode.label;
-            cfg.splice(idx, 1);
+            let next = nodei.normal;
+            nodei.label += '\n' + next.label;
+            nodei.next = next.next;
+            nodei.normal = next.normal;
+            cfg.splice(cfg.indexOf(next), 1);
             i--;
         }
     }
@@ -60,10 +68,10 @@ function buildDot(cfg) {
 function addNodes(nodes, res){
     for (var [i, node] of nodes.entries()) {
         res += 'n'+i +' [label="('+(i+1)+')\n' + node.label +'"';
-        if (node.color)
+        if (node.color != null)
             res +=' style = filled fillcolor = green';
         let shape = 'box';
-        if (node.true || node.false)
+        if (node.true != null || node.false != null)
             shape = 'diamond';
         res += ' shape="'+ shape+'"]\n';
     }
